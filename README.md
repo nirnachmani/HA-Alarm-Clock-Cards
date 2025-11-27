@@ -12,7 +12,7 @@ Custom Lovelace cards that pair with the [HA Alarm Clock integration](https://gi
 
 ## Installation
 
-1. Copy the `ha_alarm_clock_cards` folder into `config/www/ha_alarm_clock_cards/` inside your Home Assistant config.
+1. Copy the cards into `config/www/ha_alarm_clock_cards/` inside your Home Assistant config.
 2. In Home Assistant, open **Settings → Dashboards ⋮ (in the top right corner) → Resources → Add Resource**
 - enter `/hacsfiles/ha_alarm_clock/alarms-card.js` and choose **JavaScript Module** as the resource type for the alarm card, and/or,
 - enter `/hacsfiles/ha_alarm_clock/reminders-card.js` and choose **JavaScript Module** as the resource type for the reminders card
@@ -26,7 +26,7 @@ Custom Lovelace cards that pair with the [HA Alarm Clock integration](https://gi
 Per-item actions:
 - Tap to disable/enable items
 - Long press to edit items or use the edit icon in the right corner
-- For active item, use short press to snooze and long press to stop or vice versa, depedning on the integration configuration
+- For active item, use short press to snooze and long press to stop or vice versa, depending on the integration configuration
 
 ## License
 
