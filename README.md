@@ -20,8 +20,7 @@ Custom Lovelace cards that pair with the [HA Alarm Clock integration](https://gi
 
 ## Usage
 
-1. Edit a dashboard.
-2. Add a card and set `type: custom:alarms-card` or `type: custom:reminders-card`.
+To use a card and set `type: custom:alarms-card` or `type: custom:reminders-card` in a HA dashboard.
 
 Per-item actions:
 - Tap to disable/enable items
