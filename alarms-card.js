@@ -530,6 +530,10 @@ class AlarmsCard extends LitElement {
         : "Media browser is not available for Spotify"
       : "Select a media player first";
     const formBlocked = spotifyMissingSources;
+    const playerSupportsVolume = currentMediaPlayer ? this._playerSupportsVolume(currentMediaPlayer) : true;
+    const showVolumeControl = !currentMediaPlayer || playerSupportsVolume;
+    const volumeToggleChecked = playerSupportsVolume && !!this._formData.volume_enabled;
+    const volumeSliderValue = this._formData.volume_percent || "50";
   const messagePlaceholder = "Optional";
     return html`
       <div class="dialog-backdrop" @click=${this._handleDialogCancel}>
@@ -619,6 +623,32 @@ class AlarmsCard extends LitElement {
                   )}
                 </select>
               </label>
+              ${showVolumeControl
+                ? html`<div class="field span-2 volume-toggle-row">
+                    <label class="toggle inline">
+                      <input
+                        type="checkbox"
+                        ?disabled=${currentMediaPlayer && !playerSupportsVolume}
+                        .checked=${volumeToggleChecked}
+                        @change=${(ev) => this._handleVolumeToggle(ev.target.checked)}
+                      />
+                      <span>Set volume</span>
+                    </label>
+                    ${volumeToggleChecked
+                      ? html`<div class="volume-slider">
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            .value=${volumeSliderValue}
+                            @input=${(ev) => this._handleVolumeSlider(ev.target.value)}
+                          />
+                          <span class="volume-value">${volumeSliderValue}%</span>
+                        </div>`
+                      : nothing}
+                  </div>`
+                : nothing}
               ${isSpotifyPlayer
                 ? html`<label class="field span-2">
                     <span>Spotify source</span>
@@ -2696,12 +2726,16 @@ class AlarmsCard extends LitElement {
       sound_media_type: "",
       sound_media_title: "",
       spotify_source: "",
+      volume_percent: "",
+      volume_enabled: false,
       _sound_media_descriptor: null,
       _original_sound_media_id: defaultSound,
       _original_sound_media_type: "",
       _original_sound_media_title: "",
       _original_sound_media_descriptor: null,
       _original_spotify_source: "",
+      _original_volume_percent: "",
+      _original_volume_enabled: false,
       activation_entity: "",
       announce_time: true,
       announce_name: true,
@@ -2752,6 +2786,10 @@ class AlarmsCard extends LitElement {
     const nameForInput = this._isDefaultAlarmName(rawNameSource)
       ? ""
       : this._formatNameForInput(rawNameSource);
+    const rawVolumePercent = typeof attrs.volume === "number" ? Math.round(attrs.volume * 100) : "";
+    const volumePercent =
+      rawVolumePercent === "" ? "" : `${Math.max(0, Math.min(100, rawVolumePercent))}`;
+    const volumeEnabled = volumePercent !== "";
     return {
       alarm_id: alarm.entity_id,
       name: nameForInput,
@@ -2768,12 +2806,16 @@ class AlarmsCard extends LitElement {
       sound_media_type: soundMediaType,
       sound_media_title: soundMediaTitle,
       spotify_source: attrs.spotify_source ?? alarm.spotify_source ?? "",
+      volume_percent: volumePercent,
+      volume_enabled: volumeEnabled,
       _sound_media_descriptor: soundMediaDescriptor,
       _original_sound_media_id: soundMediaId,
       _original_sound_media_type: soundMediaType,
       _original_sound_media_title: soundMediaTitle,
       _original_sound_media_descriptor: soundDescriptor ? { ...soundDescriptor } : null,
       _original_spotify_source: attrs.spotify_source ?? alarm.spotify_source ?? "",
+      _original_volume_percent: volumePercent,
+      _original_volume_enabled: volumeEnabled,
       activation_entity: attrs.activation_entity ?? alarm.activation_entity ?? "",
       announce_time: attrs.announce_time ?? alarm.announce_time ?? true,
       announce_name: attrs.announce_name ?? alarm.announce_name ?? true,
@@ -2805,6 +2847,8 @@ class AlarmsCard extends LitElement {
       processedValue = value && typeof value === "object" ? { ...value } : null;
     } else if (field === "spotify_source") {
       processedValue = this._normalizeSpotifySourceValue(value);
+    } else if (field === "volume_percent") {
+      processedValue = this._sanitizeVolumePercent(value);
     }
     const updates = {
       [field]: processedValue,
@@ -2825,6 +2869,13 @@ class AlarmsCard extends LitElement {
             type: processedValue || descriptor.type,
           };
         }
+      }
+    }
+    if (field === "media_player") {
+      const supportsVolume = this._playerSupportsVolume(processedValue);
+      if (!supportsVolume) {
+        updates.volume_percent = "";
+        updates.volume_enabled = false;
       }
     }
     if (field === "sound_media_title") {
@@ -3946,11 +3997,11 @@ class AlarmsCard extends LitElement {
       }
     }
     if (Object.keys(updates).length) {
-      this._formData = {
-        ...this._formData,
-        ...updates,
-      };
-    }
+    this._formData = {
+      ...this._formData,
+      ...updates,
+    };
+  }
   }
   _enforceSpotifyDialogState() {
     const player = this._formData?.media_player;
@@ -4439,6 +4490,29 @@ class AlarmsCard extends LitElement {
       }
       data.sound_media = payload;
     }
+    const volumeSupported = this._playerSupportsVolume(mediaPlayer);
+    const volumeEnabled = volumeSupported && !!this._formData.volume_enabled;
+    const volumeValue = volumeEnabled ? this._normalizeVolumeField(this._formData.volume_percent) : null;
+    const originalVolumeEnabled = !!this._formData._original_volume_enabled;
+    const originalVolumeValue = originalVolumeEnabled
+      ? this._normalizeVolumeField(this._formData._original_volume_percent)
+      : null;
+    if (volumeValue !== null) {
+      if (
+        !isEdit ||
+        !originalVolumeEnabled ||
+        originalVolumeValue === null ||
+        volumeValue !== originalVolumeValue
+      ) {
+        data.volume = volumeValue;
+      }
+    } else if (
+      isEdit &&
+      originalVolumeEnabled &&
+      (!volumeEnabled || this._formData.volume_percent === "" || !volumeSupported)
+    ) {
+      data.volume = "";
+    }
     if (this._dialogMode === "edit" && this._formData.alarm_id) {
       data.alarm_id = this._formData.alarm_id;
     }
@@ -4497,6 +4571,41 @@ class AlarmsCard extends LitElement {
     }
     const platform = this._getMediaPlayerPlatform(entityId);
     return platform === "spotifyplus";
+  }
+  _playerSupportsVolume(entityId) {
+    if (!entityId) {
+      return false;
+    }
+    if (this._isSpotifyPlayer(entityId) && !this._isSpotifyPlusPlayer(entityId)) {
+      return false;
+    }
+    return true;
+  }
+  _handleVolumeToggle(checked) {
+    if (this._formData.media_player && !this._playerSupportsVolume(this._formData.media_player)) {
+      checked = false;
+    }
+    if (checked) {
+      const nextValue = this._formData.volume_percent || "50";
+      this._formData = {
+        ...this._formData,
+        volume_enabled: true,
+        volume_percent: this._sanitizeVolumePercent(nextValue),
+      };
+    } else {
+      this._formData = {
+        ...this._formData,
+        volume_enabled: false,
+        volume_percent: "",
+      };
+    }
+    this.requestUpdate();
+  }
+  _handleVolumeSlider(value) {
+    if (!this._formData.volume_enabled) {
+      this._handleVolumeToggle(true);
+    }
+    this._updateFormField("volume_percent", value);
   }
   _resolveSpotifyMetadataPlayer(preferredPlayer) {
     const normalizedPreferred = this._normalizeMediaPlayerValue(preferredPlayer);
@@ -4672,6 +4781,28 @@ class AlarmsCard extends LitElement {
       return "";
     }
     return String(value).trim();
+  }
+  _sanitizeVolumePercent(value) {
+    if (value === null || value === undefined || value === "") {
+      return "";
+    }
+    const num = Number(value);
+    if (Number.isNaN(num)) {
+      return "";
+    }
+    const clamped = Math.max(0, Math.min(100, Math.round(num)));
+    return `${clamped}`;
+  }
+  _normalizeVolumeField(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+    const num = Number(value);
+    if (Number.isNaN(num)) {
+      return null;
+    }
+    const clamped = Math.max(0, Math.min(100, num));
+    return clamped / 100;
   }
   _getInitialMediaBrowserPath() {
     const descriptor = this._formData?._sound_media_descriptor;
@@ -6301,11 +6432,38 @@ class AlarmsCard extends LitElement {
         gap: 20px;
         justify-content: flex-start;
       }
+      .volume-toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        width: 100%;
+        flex-direction: row;
+      }
+      .volume-toggle-row .volume-slider {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+      }
+      .volume-toggle-row .volume-slider input[type="range"] {
+        flex: 1;
+      }
+      @media (max-width: 640px) {
+        .volume-toggle-row {
+          flex-wrap: wrap;
+          row-gap: 8px;
+        }
+      }
       .toggle {
         display: flex;
         align-items: center;
         gap: 8px;
         font-size: 0.95rem;
+      }
+      .toggle.inline {
+        display: inline-flex;
       }
       .toggle input {
         width: 36px;

@@ -506,6 +506,10 @@ class RemindersCard extends LitElement {
     const activationOptions = this._activationOptions();
     const hasMediaSelection = !!(this._formData.sound_media_id || this._formData._sound_media_descriptor);
     const mediaTitleValue = this._formData.sound_media_title || "";
+    const playerSupportsVolume = currentMediaPlayer ? this._playerSupportsVolume(currentMediaPlayer) : true;
+    const showVolumeControl = !currentMediaPlayer || playerSupportsVolume;
+    const volumeToggleChecked = playerSupportsVolume && !!this._formData.volume_enabled;
+    const volumeSliderValue = this._formData.volume_percent || "50";
     return html`
       <div class="dialog-backdrop" @click=${this._handleDialogCancel}>
         <div class="dialog-panel" role="dialog" aria-modal="true" @click=${(ev) => ev.stopPropagation()}>
@@ -594,6 +598,32 @@ class RemindersCard extends LitElement {
                   )}
                 </select>
               </label>
+              ${showVolumeControl
+                ? html`<div class="field span-2 volume-toggle-row">
+                    <label class="toggle inline">
+                      <input
+                        type="checkbox"
+                        ?disabled=${currentMediaPlayer && !playerSupportsVolume}
+                        .checked=${volumeToggleChecked}
+                        @change=${(ev) => this._handleVolumeToggle(ev.target.checked)}
+                      />
+                      <span>Set volume</span>
+                    </label>
+                    ${volumeToggleChecked
+                      ? html`<div class="volume-slider">
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            .value=${volumeSliderValue}
+                            @input=${(ev) => this._handleVolumeSlider(ev.target.value)}
+                          />
+                          <span class="volume-value">${volumeSliderValue}%</span>
+                        </div>`
+                      : nothing}
+                  </div>`
+                : nothing}
               <label class="field span-2">
                 <span>Media source</span>
                 <div class="media-input-group">
@@ -3006,11 +3036,15 @@ class RemindersCard extends LitElement {
       sound_media_id: defaultSound,
       sound_media_type: "",
       sound_media_title: "",
+      volume_percent: "",
+      volume_enabled: false,
       _sound_media_descriptor: null,
       _original_sound_media_id: defaultSound,
       _original_sound_media_type: "",
       _original_sound_media_title: "",
       _original_sound_media_descriptor: null,
+      _original_volume_percent: "",
+      _original_volume_enabled: false,
       activation_entity: "",
       announce_time: true,
     };
@@ -3060,6 +3094,10 @@ class RemindersCard extends LitElement {
     const nameForInput = this._isDefaultReminderName(rawNameSource)
       ? ""
       : this._formatNameForInput(rawNameSource);
+    const rawVolumePercent = typeof attrs.volume === "number" ? Math.round(attrs.volume * 100) : "";
+    const volumePercent =
+      rawVolumePercent === "" ? "" : `${Math.max(0, Math.min(100, rawVolumePercent))}`;
+    const volumeEnabled = volumePercent !== "";
     return {
       reminder_id: reminder.entity_id,
       name: nameForInput,
@@ -3075,11 +3113,15 @@ class RemindersCard extends LitElement {
       sound_media_id: soundMediaId,
       sound_media_type: soundMediaType,
       sound_media_title: soundMediaTitle,
+      volume_percent: volumePercent,
+      volume_enabled: volumeEnabled,
       _sound_media_descriptor: soundMediaDescriptor,
       _original_sound_media_id: soundMediaId,
       _original_sound_media_type: soundMediaType,
       _original_sound_media_title: soundMediaTitle,
       _original_sound_media_descriptor: soundDescriptor ? { ...soundDescriptor } : null,
+      _original_volume_percent: volumePercent,
+      _original_volume_enabled: volumeEnabled,
       activation_entity: attrs.activation_entity ?? reminder.activation_entity ?? "",
       announce_time: attrs.announce_time ?? reminder.announce_time ?? true,
     };
@@ -3107,6 +3149,8 @@ class RemindersCard extends LitElement {
       processedValue = typeof value === "string" ? value.trim() : "";
     } else if (field === "_sound_media_descriptor") {
       processedValue = value && typeof value === "object" ? { ...value } : null;
+    } else if (field === "volume_percent") {
+      processedValue = this._sanitizeVolumePercent(value);
     }
     const updates = {
       [field]: processedValue,
@@ -3127,6 +3171,13 @@ class RemindersCard extends LitElement {
             type: processedValue || descriptor.type,
           };
         }
+      }
+    }
+    if (field === "media_player") {
+      const supportsVolume = this._playerSupportsVolume(processedValue);
+      if (!supportsVolume) {
+        updates.volume_percent = "";
+        updates.volume_enabled = false;
       }
     }
     if (field === "sound_media_title") {
@@ -3645,6 +3696,29 @@ class RemindersCard extends LitElement {
       }
       data.sound_media = payload;
     }
+    const volumeSupported = this._playerSupportsVolume(mediaPlayer);
+    const volumeEnabled = volumeSupported && !!this._formData.volume_enabled;
+    const volumeValue = volumeEnabled ? this._normalizeVolumeField(this._formData.volume_percent) : null;
+    const originalVolumeEnabled = !!this._formData._original_volume_enabled;
+    const originalVolumeValue = originalVolumeEnabled
+      ? this._normalizeVolumeField(this._formData._original_volume_percent)
+      : null;
+    if (volumeValue !== null) {
+      if (
+        !isEdit ||
+        !originalVolumeEnabled ||
+        originalVolumeValue === null ||
+        volumeValue !== originalVolumeValue
+      ) {
+        data.volume = volumeValue;
+      }
+    } else if (
+      isEdit &&
+      originalVolumeEnabled &&
+      (!volumeEnabled || this._formData.volume_percent === "" || !volumeSupported)
+    ) {
+      data.volume = "";
+    }
     if (this._dialogMode === "edit" && this._formData.reminder_id) {
       data.reminder_id = this._formData.reminder_id;
     }
@@ -3758,6 +3832,28 @@ class RemindersCard extends LitElement {
       return "";
     }
     return String(value).trim();
+  }
+  _sanitizeVolumePercent(value) {
+    if (value === null || value === undefined || value === "") {
+      return "";
+    }
+    const num = Number(value);
+    if (Number.isNaN(num)) {
+      return "";
+    }
+    const clamped = Math.max(0, Math.min(100, Math.round(num)));
+    return `${clamped}`;
+  }
+  _normalizeVolumeField(value) {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+    const num = Number(value);
+    if (Number.isNaN(num)) {
+      return null;
+    }
+    const clamped = Math.max(0, Math.min(100, num));
+    return clamped / 100;
   }
   _getInitialMediaBrowserPath() {
     const descriptor = this._formData?._sound_media_descriptor;
@@ -3931,6 +4027,43 @@ class RemindersCard extends LitElement {
       return true;
     }
     return false;
+  }
+  _playerSupportsVolume(entityId) {
+    if (!entityId) {
+      return false;
+    }
+    const entry = this.hass?.entities?.[entityId];
+    const platform = typeof entry?.platform === "string" ? entry.platform.toLowerCase() : "";
+    if (platform === "spotify") {
+      return false;
+    }
+    return true;
+  }
+  _handleVolumeToggle(checked) {
+    if (this._formData.media_player && !this._playerSupportsVolume(this._formData.media_player)) {
+      checked = false;
+    }
+    if (checked) {
+      const nextValue = this._formData.volume_percent || "50";
+      this._formData = {
+        ...this._formData,
+        volume_enabled: true,
+        volume_percent: this._sanitizeVolumePercent(nextValue),
+      };
+    } else {
+      this._formData = {
+        ...this._formData,
+        volume_enabled: false,
+        volume_percent: "",
+      };
+    }
+    this.requestUpdate();
+  }
+  _handleVolumeSlider(value) {
+    if (!this._formData.volume_enabled) {
+      this._handleVolumeToggle(true);
+    }
+    this._updateFormField("volume_percent", value);
   }
   _describeMediaPlayer(entityId, stateOverride) {
     const state = stateOverride || this.hass?.states?.[entityId];
@@ -5286,11 +5419,38 @@ class RemindersCard extends LitElement {
         gap: 20px;
         justify-content: flex-start;
       }
+      .volume-toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        width: 100%;
+        flex-direction: row;
+      }
+      .volume-toggle-row .volume-slider {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+      }
+      .volume-toggle-row .volume-slider input[type="range"] {
+        flex: 1;
+      }
+      @media (max-width: 640px) {
+        .volume-toggle-row {
+          flex-wrap: wrap;
+          row-gap: 8px;
+        }
+      }
       .toggle {
         display: flex;
         align-items: center;
         gap: 8px;
         font-size: 0.95rem;
+      }
+      .toggle.inline {
+        display: inline-flex;
       }
       .toggle input {
         width: 36px;
