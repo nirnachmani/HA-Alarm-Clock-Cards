@@ -9,6 +9,7 @@ Custom Lovelace cards that pair with the [HA Alarm Clock integration](https://gi
 - **Controls** to stop, snooze, or enable/disable each entry.
 - **Media picker** powered by HA's Media Browser plus optional Music Assistant/SpotifyPlus search.
 - **On-card media sampling** (when supported) so you can preview sounds before saving.
+- **Per-item volume overrides** so alarms/reminders can run at a custom loudness without permanently changing the media player volume.
 
 ## Installation
 
@@ -30,3 +31,4 @@ Per-item actions:
 ## License
 
 MIT - see `LICENSE`.
+
