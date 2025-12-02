@@ -14,7 +14,7 @@ Custom Lovelace cards that pair with the [HA Alarm Clock integration](https://gi
 ## Installation
 
 ### HACS (recommended)
-1. Open **HACS → ⋮ → Custom repositories**.
+1. Open **HACS → ⋮ (in the top right corner) → Custom repositories**.
 2. Add `https://github.com/nirnachmani/HA-Alarm-Clock-Cards`, under type choose **Dashboard** and click **ADD**.
 3. Search and download “HA Alarm Clock Cards” in the main HACS view 
 4. HACS will automatically add the alarms-card as a dashboard resource, but not the reminders-card. If you wish to use the reminders-card, open **Settings → Dashboards → ⋮ (in the top right corner) → Resources → Add Resource**, enter `/hacsfiles/HA-Alarm-Clock-Cards/reminders-card.js` as the URL and choose **JavaScript Module** as the resource type   
