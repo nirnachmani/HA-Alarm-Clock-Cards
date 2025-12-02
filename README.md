@@ -13,9 +13,16 @@ Custom Lovelace cards that pair with the [HA Alarm Clock integration](https://gi
 
 ## Installation
 
-1. Copy the cards files into `config/www/ha_alarm_clock/` inside your Home Assistant (if /config/www doesn't exist, create it).
+### HACS (recommended)
+1. Open **HACS → ⋮ → Custom repositories**.
+2. Add `https://github.com/nirnachmani/HA-Alarm-Clock-Cards`, under type choose **Dashboard** and click **ADD**.
+3. Search and download “HA Alarm Clock Cards” in the main HACS view 
+4. HACS will automatically add the alarms-card as a dashboard resource, but not the reminders-card. If you wish to use the reminders-card, open **Settings → Dashboards → ⋮ (in the top right corner) → Resources → Add Resource**, enter `/hacsfiles/HA-Alarm-Clock-Cards/reminders-card.js` as the URL and choose **JavaScript Module** as the resource type   
+
+### Manual
+1. Copy the cards files into `config/www/HA-Alarm-Clock-Cards/` inside your Home Assistant (if /config/www doesn't exist, create it, then create the `HA-Alarm-Clock-Cards` folder).
 2. In Home Assistant, open **Settings → Dashboards → ⋮ (in the top right corner) → Resources → Add Resource**
-3. enter `/local/ha_alarm_clock/alarms-card.js` or `/local/ha_alarm_clock/reminders-card.js` and choose **JavaScript Module** as the resource type for the alarm card, and/or,
+3. enter `/local/HA-Alarm-Clock-Cards/alarms-card.js` or `/local/hHA-Alarm-Clock-Cards/reminders-card.js` and choose **JavaScript Module** as the resource type for the alarm card
 4. Repeat to add the other card as resource, if needed
 3. Reload the browser
 
