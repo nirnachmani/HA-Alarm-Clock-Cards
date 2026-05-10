@@ -329,6 +329,7 @@ class RemindersCard extends LitElement {
       default_reminder_sound: attrs.default_reminder_sound || "",
       default_snooze_minutes: coerceNumber(attrs.default_snooze_minutes),
       active_press_mode: pressKey,
+      hidden_media_players: normalizeList(attrs.hidden_media_players),
       allowed_activation_entities: normalizeList(attrs.allowed_activation_entities),
     };
   }
@@ -341,6 +342,9 @@ class RemindersCard extends LitElement {
   }
   _getAllowedActivationEntities() {
     return this._getIntegrationSettings().allowed_activation_entities || [];
+  }
+  _getHiddenMediaPlayers() {
+    return this._getIntegrationSettings().hidden_media_players || [];
   }
   _getSnoozeMinutes() {
     return this._getIntegrationSettings().default_snooze_minutes;
@@ -397,6 +401,8 @@ class RemindersCard extends LitElement {
           disabled: !reminder.isEnabled,
           readonly: reminder.readonly,
         });
+    const toggleLabel = reminder.isEnabled ? "Disable reminder" : "Enable reminder";
+    const toggleIcon = reminder.isEnabled ? "mdi:bell-off-outline" : "mdi:bell-check-outline";
     return html`
       <div
         class=${classes}
@@ -404,9 +410,9 @@ class RemindersCard extends LitElement {
         @pointerup=${(ev) => this._onPointerUp(ev, reminder)}
         @pointercancel=${this._clearPendingPress}
         @pointerleave=${this._clearPendingPress}
-        tabindex="0"
+        tabindex=${reminder.isActive ? "0" : "-1"}
         @keydown=${(ev) => this._handleKeydown(ev, reminder)}
-        role="button"
+        role=${reminder.isActive ? "button" : "article"}
         aria-label=${`${reminder.displayTime} reminder card`}
       >
         <div class="card-top">
@@ -438,6 +444,33 @@ class RemindersCard extends LitElement {
             </div>
           </div>
           <div class="card-actions">
+            <button
+              class="icon-button"
+              title=${toggleLabel}
+              type="button"
+              aria-label=${toggleLabel}
+              @click=${(ev) => {
+                ev.stopPropagation();
+                this._toggleSwitch(reminder);
+              }}
+              @pointerdown=${(ev) => ev.stopPropagation()}
+              @pointerup=${(ev) => ev.stopPropagation()}
+            >
+              <ha-icon icon=${toggleIcon}></ha-icon>
+            </button>
+            <button
+              class="icon-button"
+              title="Duplicate reminder"
+              type="button"
+              aria-label="Duplicate reminder"
+              @click=${(ev) => {
+                ev.stopPropagation();
+                this._duplicateReminder(reminder);
+              }}
+              @pointerdown=${(ev) => ev.stopPropagation()}
+            >
+              <ha-icon icon="mdi:content-copy"></ha-icon>
+            </button>
             <button
               class="icon-button"
               title="Edit reminder"
@@ -3593,6 +3626,17 @@ class RemindersCard extends LitElement {
       this._saving = false;
     }
   }
+  async _duplicateReminder(reminder) {
+    try {
+      await this._callIntegrationService("duplicate_reminder", {
+        reminder_id: reminder.entity_id,
+      });
+      this._notify("Reminder duplicated");
+    } catch (err) {
+      console.error("Failed to duplicate reminder", err);
+      this._notify(err?.message || "Failed to duplicate reminder", true);
+    }
+  }
   _validateForm() {
     const errors = [];
     if (!this._formData.time) {
@@ -3729,8 +3773,10 @@ class RemindersCard extends LitElement {
     if (!this.hass) {
       return [];
     }
+    const hiddenPlayers = new Set(this._getHiddenMediaPlayers());
     return Object.values(this.hass.states)
       .filter((state) => state.entity_id.startsWith("media_player."))
+      .filter((state) => !hiddenPlayers.has(state.entity_id))
       .filter((state) => !this._isSpotifyPlatformPlayer(state.entity_id))
       .map((state) => {
         const descriptor = this._describeMediaPlayer(state.entity_id, state);
@@ -4210,11 +4256,18 @@ class RemindersCard extends LitElement {
         announce_name: attrs.announce_name,
       };
     });
-  return reminders.sort((a, b) => {
+    return reminders.sort((a, b) => {
+      if (a.isEnabled !== b.isEnabled) {
+        return a.isEnabled ? -1 : 1;
+      }
       if (!a.scheduledTime && !b.scheduledTime) return a.entity_id.localeCompare(b.entity_id);
       if (!a.scheduledTime) return 1;
       if (!b.scheduledTime) return -1;
-      return new Date(a.scheduledTime).getTime() - new Date(b.scheduledTime).getTime();
+      const timeDifference = new Date(a.scheduledTime).getTime() - new Date(b.scheduledTime).getTime();
+      if (timeDifference !== 0) {
+        return timeDifference;
+      }
+      return a.entity_id.localeCompare(b.entity_id);
     });
   }
   _formatTime(hours, minutes) {
@@ -4283,14 +4336,20 @@ class RemindersCard extends LitElement {
   }
   _handleKeydown(ev, reminder) {
     if (ev.key === "Enter" || ev.key === " ") {
+      if (!reminder.isActive) {
+        return;
+      }
       ev.preventDefault();
-      reminder.isActive ? this._handleActiveShort(reminder) : this._toggleSwitch(reminder);
+      this._handleActiveShort(reminder);
     } else if (ev.key === "e") {
       ev.preventDefault();
       this._openDialog("edit", reminder);
     }
   }
   _onPointerDown(ev, reminder) {
+    if (!reminder.isActive) {
+      return;
+    }
     if (ev.button !== 0) {
       return;
     }
@@ -4304,6 +4363,9 @@ class RemindersCard extends LitElement {
     }, this._config.long_press_ms ?? LONG_PRESS_DEFAULT_MS);
   }
   _onPointerUp(ev, reminder) {
+    if (!reminder.isActive) {
+      return;
+    }
     ev.preventDefault();
     if (this._pressHandle) {
       clearTimeout(this._pressHandle);
@@ -4322,18 +4384,16 @@ class RemindersCard extends LitElement {
     this._pendingPressReminder = null;
   };
   _handleShortPress(reminder) {
-    if (reminder.isActive) {
-      this._handleActiveShort(reminder);
-    } else {
-      this._toggleSwitch(reminder);
+    if (!reminder.isActive) {
+      return;
     }
+    this._handleActiveShort(reminder);
   }
   _handleLongPress(reminder) {
-    if (reminder.isActive) {
-      this._handleActiveLong(reminder);
-    } else {
-      this._openDialog("edit", reminder);
+    if (!reminder.isActive) {
+      return;
     }
+    this._handleActiveLong(reminder);
   }
   _handleActiveShort(reminder) {
     const mode = this._getPressMode();
@@ -4924,7 +4984,10 @@ class RemindersCard extends LitElement {
         background: rgba(0, 0, 0, 0.45);
         display: flex;
         justify-content: center;
-        align-items: center;
+        align-items: flex-start;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 12px;
         z-index: 1000;
       }
       .dialog-backdrop.media-browser-layer {
@@ -4932,13 +4995,15 @@ class RemindersCard extends LitElement {
       }
       .dialog-panel {
         width: min(560px, 94vw);
-        max-height: 90vh;
+        max-height: calc(100dvh - 24px);
         background: var(--card-background-color, #fff);
         border-radius: 16px;
         padding: 16px;
         display: flex;
         flex-direction: column;
         gap: 16px;
+        min-height: 0;
+        overflow: hidden;
         box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
       }
       .dialog-panel.media-browser {
@@ -5288,11 +5353,26 @@ class RemindersCard extends LitElement {
         display: flex;
         flex-direction: column;
         gap: 16px;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        padding-right: 4px;
       }
       .form-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
+      }
+      @media (max-width: 600px) {
+        .dialog-backdrop {
+          padding: 8px;
+        }
+        .dialog-panel {
+          width: min(560px, 100vw - 16px);
+          max-height: calc(100dvh - 16px);
+        }
       }
       .field {
         display: flex;
