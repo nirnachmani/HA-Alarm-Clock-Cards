@@ -6,6 +6,8 @@ const LONG_PRESS_DEFAULT_MS = 550;
 const INTEGRATION_DOMAIN = "ha_alarm_clock";
 const DEFAULT_SETTINGS_ENTITY = `sensor.${INTEGRATION_DOMAIN}`;
 const RESOLVE_MEDIA_TYPE = `${INTEGRATION_DOMAIN}/resolve_media`;
+const LIST_USERS_TYPE = `${INTEGRATION_DOMAIN}/users`;
+const OWNER_SCOPE_STORAGE_KEY = "haAlarmClock.alarmsCard.scope";
 const DAY_LABELS = {
   mon: "Mon",
   tue: "Tue",
@@ -223,6 +225,10 @@ class AlarmsCard extends LitElement {
       _previewPlaying: { state: true },
       _previewLoading: { state: true },
       _previewError: { state: true },
+      _ownerScope: { state: true },
+      _users: { state: true },
+      _usersLoading: { state: true },
+      _usersError: { state: true },
     };
   }
   constructor() {
@@ -279,6 +285,11 @@ class AlarmsCard extends LitElement {
     this._previewUrl = "";
     this._previewAudio = null;
     this._previewRequestId = 0;
+    this._ownerScope = this._readOwnerScopePreference();
+    this._users = [];
+    this._usersLoading = false;
+    this._usersError = "";
+    this._usersPromise = null;
     this._spotifyDebugEnabled = this._readSpotifyDebugPreference();
     this._plexDebugEnabled = this._readPlexDebugPreference();
     this._dlnaDebugEnabled = this._readDlnaDebugPreference();
@@ -298,6 +309,83 @@ class AlarmsCard extends LitElement {
   getCardSize() {
     const alarms = this._getAlarmEntities();
     return Math.max(alarms.length || 1, 2);
+  }
+  _readOwnerScopePreference() {
+    try {
+      const value = window.localStorage?.getItem(OWNER_SCOPE_STORAGE_KEY);
+      return value === "mine" ? "mine" : "all";
+    } catch (_err) {
+      return "all";
+    }
+  }
+  _setOwnerScope(scope) {
+    const nextScope = scope === "mine" ? "mine" : "all";
+    this._ownerScope = nextScope;
+    try {
+      window.localStorage?.setItem(OWNER_SCOPE_STORAGE_KEY, nextScope);
+    } catch (_err) {
+      // Ignore storage failures; the visible state still updates.
+    }
+  }
+  _getCurrentUserId() {
+    return this.hass?.user?.id || "";
+  }
+  _mineFilterMatches(alarm) {
+    if (this._ownerScope !== "mine") {
+      return true;
+    }
+    const ownerId = alarm.user_id || "";
+    return !!ownerId && ownerId === this._getCurrentUserId();
+  }
+  async _ensureUsersLoaded() {
+    if (!this.hass?.callWS || this._usersLoading || this._users.length) {
+      return;
+    }
+    this._usersLoading = true;
+    this._usersError = "";
+    this._usersPromise = this.hass
+      .callWS({ type: LIST_USERS_TYPE })
+      .then((result) => {
+        this._users = Array.isArray(result?.users) ? result.users : [];
+      })
+      .catch((err) => {
+        this._usersError = err?.message || "Unable to load users";
+      })
+      .finally(() => {
+        this._usersLoading = false;
+        this._usersPromise = null;
+      });
+    await this._usersPromise;
+  }
+  _ownerOptions(selectedUserId = "") {
+    const currentUserId = this._getCurrentUserId();
+    const seen = new Set();
+    const options = [{ id: "", name: "No owner" }];
+    const add = (user) => {
+      if (!user?.id || seen.has(user.id)) {
+        return;
+      }
+      seen.add(user.id);
+      options.push({
+        id: user.id,
+        name: `${user.name || user.id}${user.id === currentUserId ? " (current)" : ""}`,
+      });
+    };
+    this._users.forEach(add);
+    if (currentUserId && !seen.has(currentUserId)) {
+      add({ id: currentUserId, name: "Current user" });
+    }
+    if (selectedUserId && !seen.has(selectedUserId)) {
+      add({ id: selectedUserId, name: selectedUserId });
+    }
+    return options;
+  }
+  _ownerLabel(userId, userName) {
+    if (!userId) {
+      return "No owner";
+    }
+    const match = this._users.find((user) => user.id === userId);
+    return match?.name || userName || userId;
   }
   _getSettingsEntityId() {
     if (this._config?.settings_entity) {
@@ -364,7 +452,16 @@ class AlarmsCard extends LitElement {
     const settings = this._getIntegrationSettings();
     const pressMode = this._getPressMode();
     const settingsMissing = !this.hass.states?.[settings.entity_id];
-    const alarms = this._buildAlarmModels();
+    const allAlarms = this._buildAlarmModels();
+    const effectiveOwnerScope = this._ownerScope === "mine" ? "mine" : "all";
+    const alarms = allAlarms.filter((alarm) =>
+      effectiveOwnerScope === "mine" ? this._mineFilterMatches(alarm) : true
+    );
+    const emptyTitle = effectiveOwnerScope === "mine" ? "No alarms for this user." : "No alarms yet";
+    const emptyBody =
+      effectiveOwnerScope === "mine"
+        ? ""
+        : "Tap the + button to schedule your first wake-up.";
     return html`
       <ha-card>
         <div class="header">
@@ -372,14 +469,31 @@ class AlarmsCard extends LitElement {
             <div class="title">${this._config.title}</div>
             ${this._config.legend && pressMode
               ? html`<div class="legend">
-                  <span class="legend-item">Tap -> ${pressMode.short}</span>
-                  <span class="legend-item">Hold -> ${pressMode.long}</span>
+                  <span class="legend-item">Tap -> ${pressMode.short} / Hold -> ${pressMode.long}</span>
                 </div>`
               : nothing}
           </div>
+          <div class="header-actions">
+            <div class="scope-toggle" role="group" aria-label="Alarm owner filter">
+              <button
+                type="button"
+                class=${classMap({ active: effectiveOwnerScope !== "mine" })}
+                @click=${() => this._setOwnerScope("all")}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                class=${classMap({ active: effectiveOwnerScope === "mine" })}
+                @click=${() => this._setOwnerScope("mine")}
+              >
+                Mine
+              </button>
+            </div>
           <button class="fab top" type="button" @click=${() => this._openDialog("create")} aria-label="Add alarm">
             <ha-icon icon="mdi:plus"></ha-icon>
           </button>
+          </div>
         </div>
         ${settingsMissing
           ? html`<div class="settings-warning">
@@ -394,8 +508,8 @@ class AlarmsCard extends LitElement {
               <div class="empty-icon">
                 <ha-icon icon="mdi:alarm-plus"></ha-icon>
               </div>
-              <div class="empty-title">No alarms yet</div>
-              <div class="empty-body">Tap the + button to schedule your first wake-up.</div>
+              <div class="empty-title">${emptyTitle}</div>
+              ${emptyBody ? html`<div class="empty-body">${emptyBody}</div>` : nothing}
             </div>`}
       </ha-card>
       ${this._renderDialog()}
@@ -568,6 +682,7 @@ class AlarmsCard extends LitElement {
     const volumeToggleChecked = playerSupportsVolume && !!this._formData.volume_enabled;
     const volumeSliderValue = this._formData.volume_percent || "50";
   const messagePlaceholder = "Optional";
+    const ownerOptions = this._ownerOptions(this._formData.user_id || "");
     return html`
       <div class="dialog-backdrop" @click=${this._handleDialogCancel}>
         <div class="dialog-panel" role="dialog" aria-modal="true" @click=${(ev) => ev.stopPropagation()}>
@@ -776,6 +891,24 @@ class AlarmsCard extends LitElement {
                     <span>Announce name</span>
                   </label>
                 </div>`}
+            <div class="form-grid">
+              <label class="field span-2">
+                <span>Owner</span>
+                <select
+                  .value=${this._formData.user_id || ""}
+                  @focus=${() => this._ensureUsersLoaded()}
+                  @click=${() => this._ensureUsersLoaded()}
+                  @change=${(ev) => this._updateFormField("user_id", ev.target.value)}
+                >
+                  ${ownerOptions.map(
+                    (owner) => html`<option value=${owner.id} ?selected=${owner.id === (this._formData.user_id || "")}>
+                      ${owner.name}
+                    </option>`
+                  )}
+                </select>
+                ${this._usersError ? html`<small>${this._usersError}</small>` : nothing}
+              </label>
+            </div>
           </div>
           <div class="dialog-actions">
             ${isEdit
@@ -2728,6 +2861,7 @@ class AlarmsCard extends LitElement {
     this._enforceSpotifyDialogState();
     this._handleSoundMediaDescriptorChanged();
     this._dialogOpen = true;
+    this._ensureUsersLoaded();
   }
   _closeDialog() {
     this._stopMediaPreview();
@@ -2772,6 +2906,7 @@ class AlarmsCard extends LitElement {
       activation_entity: "",
       announce_time: true,
       announce_name: true,
+      user_id: this._getCurrentUserId(),
     };
   }
   _prefillFromAlarm(alarm) {
@@ -2852,6 +2987,7 @@ class AlarmsCard extends LitElement {
       activation_entity: attrs.activation_entity ?? alarm.activation_entity ?? "",
       announce_time: attrs.announce_time ?? alarm.announce_time ?? true,
       announce_name: attrs.announce_name ?? alarm.announce_name ?? true,
+      user_id: attrs.user_id ?? alarm.user_id ?? "",
     };
   }
   _updateFormField(field, value) {
@@ -4462,6 +4598,7 @@ class AlarmsCard extends LitElement {
       announce_time: !!this._formData.announce_time,
       announce_name: !!this._formData.announce_name,
       activation_entity: this._formData.activation_entity || undefined,
+      user_id: this._formData.user_id || "",
     };
     if (this._isSpotifyPlayer(mediaPlayer)) {
       const spotifySource = this._normalizeSpotifySourceValue(this._formData.spotify_source);
@@ -5429,6 +5566,8 @@ class AlarmsCard extends LitElement {
         spotify_source: attrs.spotify_source || "",
         announce_time: attrs.announce_time,
         announce_name: attrs.announce_name,
+        user_id: attrs.user_id || "",
+        user_name: attrs.user_name || "",
       };
     });
     return alarms.sort((a, b) => {
@@ -5693,6 +5832,39 @@ class AlarmsCard extends LitElement {
         background: rgba(0, 0, 0, 0.05);
         padding: 4px 8px;
         border-radius: 999px;
+      }
+      .header-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+      .scope-toggle {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.06);
+      }
+      .scope-toggle button {
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--secondary-text-color);
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.82rem;
+        line-height: 1;
+        padding: 7px 10px;
+      }
+      .scope-toggle button.active {
+        background: var(--card-background-color, #fff);
+        color: var(--primary-text-color);
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16);
+      }
+      .scope-toggle button:disabled {
+        cursor: default;
+        opacity: 0.45;
       }
       .icon-button {
         border: none;
