@@ -331,9 +331,6 @@ class AlarmsCard extends LitElement {
     return this.hass?.user?.id || "";
   }
   _mineFilterMatches(alarm) {
-    if (this._ownerScope !== "mine") {
-      return true;
-    }
     const ownerId = alarm.user_id || "";
     return !!ownerId && ownerId === this._getCurrentUserId();
   }
@@ -425,6 +422,7 @@ class AlarmsCard extends LitElement {
       default_reminder_sound: attrs.default_reminder_sound || "",
       default_snooze_minutes: coerceNumber(attrs.default_snooze_minutes),
       active_press_mode: pressKey,
+      restrict_non_admin_ownership: attrs.restrict_non_admin_ownership === true,
       hidden_media_players: normalizeList(attrs.hidden_media_players),
       allowed_activation_entities: normalizeList(attrs.allowed_activation_entities),
     };
@@ -445,6 +443,15 @@ class AlarmsCard extends LitElement {
   _getSnoozeMinutes() {
     return this._getIntegrationSettings().default_snooze_minutes;
   }
+  _isCurrentUserAdmin() {
+    return this.hass.user.is_admin === true;
+  }
+  _isOwnershipRestrictedForCurrentUser() {
+    return this._getIntegrationSettings().restrict_non_admin_ownership && !this._isCurrentUserAdmin();
+  }
+  _canChangeOwnership() {
+    return !this._isOwnershipRestrictedForCurrentUser();
+  }
   render() {
     if (!this.hass || !this._config) {
       return html``;
@@ -453,7 +460,8 @@ class AlarmsCard extends LitElement {
     const pressMode = this._getPressMode();
     const settingsMissing = !this.hass.states?.[settings.entity_id];
     const allAlarms = this._buildAlarmModels();
-    const effectiveOwnerScope = this._ownerScope === "mine" ? "mine" : "all";
+    const ownershipRestricted = this._isOwnershipRestrictedForCurrentUser();
+    const effectiveOwnerScope = ownershipRestricted || this._ownerScope === "mine" ? "mine" : "all";
     const alarms = allAlarms.filter((alarm) =>
       effectiveOwnerScope === "mine" ? this._mineFilterMatches(alarm) : true
     );
@@ -474,22 +482,24 @@ class AlarmsCard extends LitElement {
               : nothing}
           </div>
           <div class="header-actions">
-            <div class="scope-toggle" role="group" aria-label="Alarm owner filter">
-              <button
-                type="button"
-                class=${classMap({ active: effectiveOwnerScope !== "mine" })}
-                @click=${() => this._setOwnerScope("all")}
-              >
-                All
-              </button>
-              <button
-                type="button"
-                class=${classMap({ active: effectiveOwnerScope === "mine" })}
-                @click=${() => this._setOwnerScope("mine")}
-              >
-                Mine
-              </button>
-            </div>
+            ${ownershipRestricted
+              ? nothing
+              : html`<div class="scope-toggle" role="group" aria-label="Alarm owner filter">
+                  <button
+                    type="button"
+                    class=${classMap({ active: effectiveOwnerScope !== "mine" })}
+                    @click=${() => this._setOwnerScope("all")}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    class=${classMap({ active: effectiveOwnerScope === "mine" })}
+                    @click=${() => this._setOwnerScope("mine")}
+                  >
+                    Mine
+                  </button>
+                </div>`}
           <button class="fab top" type="button" @click=${() => this._openDialog("create")} aria-label="Add alarm">
             <ha-icon icon="mdi:plus"></ha-icon>
           </button>
@@ -682,7 +692,8 @@ class AlarmsCard extends LitElement {
     const volumeToggleChecked = playerSupportsVolume && !!this._formData.volume_enabled;
     const volumeSliderValue = this._formData.volume_percent || "50";
   const messagePlaceholder = "Optional";
-    const ownerOptions = this._ownerOptions(this._formData.user_id || "");
+    const canChangeOwnership = this._canChangeOwnership();
+    const ownerOptions = canChangeOwnership ? this._ownerOptions(this._formData.user_id || "") : [];
     return html`
       <div class="dialog-backdrop" @click=${this._handleDialogCancel}>
         <div class="dialog-panel" role="dialog" aria-modal="true" @click=${(ev) => ev.stopPropagation()}>
@@ -891,24 +902,26 @@ class AlarmsCard extends LitElement {
                     <span>Announce name</span>
                   </label>
                 </div>`}
-            <div class="form-grid">
-              <label class="field span-2">
-                <span>Owner</span>
-                <select
-                  .value=${this._formData.user_id || ""}
-                  @focus=${() => this._ensureUsersLoaded()}
-                  @click=${() => this._ensureUsersLoaded()}
-                  @change=${(ev) => this._updateFormField("user_id", ev.target.value)}
-                >
-                  ${ownerOptions.map(
-                    (owner) => html`<option value=${owner.id} ?selected=${owner.id === (this._formData.user_id || "")}>
-                      ${owner.name}
-                    </option>`
-                  )}
-                </select>
-                ${this._usersError ? html`<small>${this._usersError}</small>` : nothing}
-              </label>
-            </div>
+            ${canChangeOwnership
+              ? html`<div class="form-grid">
+                  <label class="field span-2">
+                    <span>Owner</span>
+                    <select
+                      .value=${this._formData.user_id || ""}
+                      @focus=${() => this._ensureUsersLoaded()}
+                      @click=${() => this._ensureUsersLoaded()}
+                      @change=${(ev) => this._updateFormField("user_id", ev.target.value)}
+                    >
+                      ${ownerOptions.map(
+                        (owner) => html`<option value=${owner.id} ?selected=${owner.id === (this._formData.user_id || "")}>
+                          ${owner.name}
+                        </option>`
+                      )}
+                    </select>
+                    ${this._usersError ? html`<small>${this._usersError}</small>` : nothing}
+                  </label>
+                </div>`
+              : nothing}
           </div>
           <div class="dialog-actions">
             ${isEdit
@@ -2861,7 +2874,9 @@ class AlarmsCard extends LitElement {
     this._enforceSpotifyDialogState();
     this._handleSoundMediaDescriptorChanged();
     this._dialogOpen = true;
-    this._ensureUsersLoaded();
+    if (this._canChangeOwnership()) {
+      this._ensureUsersLoaded();
+    }
   }
   _closeDialog() {
     this._stopMediaPreview();
@@ -4598,8 +4613,12 @@ class AlarmsCard extends LitElement {
       announce_time: !!this._formData.announce_time,
       announce_name: !!this._formData.announce_name,
       activation_entity: this._formData.activation_entity || undefined,
-      user_id: this._formData.user_id || "",
     };
+    if (this._canChangeOwnership()) {
+      data.user_id = this._formData.user_id || "";
+    } else if (this._dialogMode !== "edit") {
+      data.user_id = this._getCurrentUserId();
+    }
     if (this._isSpotifyPlayer(mediaPlayer)) {
       const spotifySource = this._normalizeSpotifySourceValue(this._formData.spotify_source);
       if (spotifySource) {
@@ -6169,7 +6188,7 @@ class AlarmsCard extends LitElement {
         align-items: flex-start;
         overflow-y: auto;
         overscroll-behavior: contain;
-        padding: 12px;
+        padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
         z-index: 1000;
       }
       .dialog-backdrop.media-browser-layer {
@@ -6177,7 +6196,7 @@ class AlarmsCard extends LitElement {
       }
       .dialog-panel {
         width: min(560px, 94vw);
-        max-height: calc(100dvh - 24px);
+        max-height: calc(100dvh - 24px - env(safe-area-inset-bottom, 0px));
         background: var(--card-background-color, #fff);
         border-radius: 16px;
         padding: 16px;
@@ -6541,6 +6560,7 @@ class AlarmsCard extends LitElement {
         overscroll-behavior: contain;
         -webkit-overflow-scrolling: touch;
         padding-right: 4px;
+        padding-bottom: 8px;
       }
       .form-grid {
         display: grid;
@@ -6549,11 +6569,11 @@ class AlarmsCard extends LitElement {
       }
       @media (max-width: 600px) {
         .dialog-backdrop {
-          padding: 8px;
+          padding: 8px 8px calc(16px + env(safe-area-inset-bottom, 0px));
         }
         .dialog-panel {
           width: min(560px, 100vw - 16px);
-          max-height: calc(100dvh - 16px);
+          max-height: calc(100dvh - 24px - env(safe-area-inset-bottom, 0px));
         }
       }
       .field {
@@ -6727,6 +6747,7 @@ class AlarmsCard extends LitElement {
         align-items: center;
         gap: 10px;
         flex-wrap: wrap;
+        flex: 0 0 auto;
       }
       .dialog-actions-right {
         display: flex;
