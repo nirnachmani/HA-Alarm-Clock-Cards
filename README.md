@@ -13,7 +13,19 @@ Custom Lovelace cards that pair with the [HA Alarm Clock integration](https://gi
 
 ## Installation
 
-### HACS (recommended)
+### Marketplace (Home Assistant 2026.11 and later)
+
+1. Open **Settings → Marketplace** and connect your GitHub account if prompted. Custom repositories require a GitHub connection.
+2. Select **Add from link**, enter `https://github.com/nirnachmani/HA-Alarm-Clock-Cards`, and choose **Dashboard** if prompted.
+3. Install **HA Alarm Clock Cards**. Marketplace downloads both card files and registers `alarms-card.js` as a JavaScript module resource.
+4. To use the reminders card, open **Settings → Dashboards → ⋮ → Resources → Add Resource**. Enter `/local/community/HA-Alarm-Clock-Cards/reminders-card.js` and select **JavaScript Module**. Existing `/hacsfiles/HA-Alarm-Clock-Cards/reminders-card.js` resources remain supported; do not add a duplicate if one is already present.
+5. Reload your browser and follow any Home Assistant restart prompt. If dashboard resources are managed in YAML, register both card files there instead, using `/local/community/HA-Alarm-Clock-Cards/alarms-card.js` and `/local/community/HA-Alarm-Clock-Cards/reminders-card.js` with `type: module`.
+
+Install the [HA Alarm Clock integration](https://github.com/nirnachmani/HA-Alarm-Clock) separately; the cards require it. The cards currently load Lit from `unpkg.com`, so the browser displaying them needs access to that site.
+
+Marketplace replaces HACS starting with Home Assistant 2026.11. Existing HACS installations migrate automatically.
+
+### HACS (Home Assistant 2026.10 and earlier)
 1. Open **HACS → ⋮ (in the top right corner) → Custom repositories**.
 2. Add `https://github.com/nirnachmani/HA-Alarm-Clock-Cards`, under type choose **Dashboard** and click **ADD**.
 3. Search and download “HA Alarm Clock Cards” in the main HACS view 
